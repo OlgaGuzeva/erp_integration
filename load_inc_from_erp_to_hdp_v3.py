@@ -139,7 +139,7 @@ def save_to_file(ready_df, j):
 if __name__ == '__main__':
     # размер блока на Hadoop
     #block_size = 128*1024*1024.0
-    rows_cnt = 160000
+
     folder = '/home/local/X5/olga.guzeva/inc/2LIS_02_ITM'
 
     # init
