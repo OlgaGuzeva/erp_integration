@@ -61,7 +61,7 @@ if __name__ == '__main__':
 
     print_params()
 
-    i = 1
+    j = 1
 
     logging.info('Fetching queue...')
     for cur in range(3):
@@ -69,7 +69,6 @@ if __name__ == '__main__':
         res_df = pd.DataFrame([cur, cur])
 
         logging.info('res_df.shape[0] = ' + str(res_df.shape[0]))
-        logging.info('rows_cnt = ' + str(rows_cnt))
 
         save_to_file(res_df, j)
 
