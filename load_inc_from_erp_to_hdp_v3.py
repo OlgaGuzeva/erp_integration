@@ -11,7 +11,6 @@ import pandas as pd
 import configparser
 from datetime import datetime
 import hdfs
-import os
 import logging
 
 
@@ -21,7 +20,7 @@ def print_params():
     logging.info(u'subscriber name: ' + queue_params['I_SUBSCRIBER_NAME'])
     logging.info(u'subscriber process: ' + queue_params['I_SUBSCRIBER_PROCESS'])
     logging.info(u'queue name: ' + queue_params['I_QUEUENAME'])
-    logging.info(u'extruction mode: ' + queue_params['I_EXTRACTION_MODE'])
+    logging.info(u'extraction mode: ' + queue_params['I_EXTRACTION_MODE'])
     
     
 def get_details():
@@ -114,7 +113,6 @@ def parse_row(row):
     global details
     res_cols = {}
     cur_idx = 0
-    end_idx = 0
     for field in details['ET_FIELDS']:
         end_idx = cur_idx + int(field['OUTPUTLENG'])
         res_cols[field['NAME']] = row[cur_idx:end_idx].strip()
@@ -123,16 +121,17 @@ def parse_row(row):
 
 
 def save_to_file(ready_df, j):
+    local_file_name = folder + '/' + queue_params['I_QUEUENAME'] + datetime.now().strftime('%Y%m%d') + '.csv'
+
+    logging.info('Writing file to local file system: {}'.format(local_file_name))
+    ready_df.to_csv(local_file_name, index = False)
+    logging.info('Writing to local system is finished. File {}'.format(local_file_name))
+
     new_file_name = queue_params['I_QUEUENAME'] + datetime.now().strftime('%Y%m%d') + '_' + str(j) + '.csv'
-    full_file_name = folder + '/' + new_file_name
-    logging.info('Writing file to local file system: {}'.format(new_file_name))
-    ready_df.to_csv(queue_params['I_QUEUENAME'] + datetime.now().strftime('%Y%m%d') + '.csv', index = False)
-    logging.info('Writing to local system is finished. File ' + new_file_name)
-    
     logging.info('Writing file to HDFS: {}'.format(new_file_name))
-    client = hdfs.Config().get_client('dev')
-    #client.upload('inc/' + queue_params['I_QUEUENAME']  + '/' + new_file_name, full_file_name, n_threads=4)
-    client.write('inc/' + queue_params['I_QUEUENAME']  + '/' + new_file_name, data = ready_df.to_csv(), encoding='utf-8', replication=1)
+
+    client.upload('inc/{}/{}'.format(queue_params['I_QUEUENAME'], new_file_name), local_file_name, n_threads=10)
+
     logging.info('Writing to HDFS is finished. File ' + new_file_name)        
     logging.info('Size: ' + str(ready_df.shape[0]) + ', ' + str(ready_df.shape[1]))
 
@@ -155,6 +154,9 @@ if __name__ == '__main__':
     # Logging
     logging.basicConfig(format = u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
         filename = u'/home/local/X5/olga.guzeva/logs/' + queue_params['I_QUEUENAME'] + '_' + datetime.now().strftime('%Y%m%d') + '_log.log', level = logging.INFO)
+
+    # Подключение к HDFS
+    client = hdfs.Config().get_client('dev')
 
     logging.info('************Start program************')
 
@@ -186,24 +188,24 @@ if __name__ == '__main__':
     # Используется для подсчета текущего размера DataFrame
     current_size = 0
     # Количество строк, которое влезет в блок
-    #rows_cnt = 0
+    rows_cnt = 200000
     # Счетчик для добавления в имя файла
     i = 1
-    j = 17
+    j = 1
     # Вычитываем строки из очереди в цикле
     # Выходим из цикла, когда данные закончились: E_NO_MORE_DATA = X
     # logging.info(datetime.now())
     logging.info('Fetching queue...')
     while True:
         fetch_result = fetch_rows(open_result)
-        if (fetch_result['E_NO_MORE_DATA'] == 'X'):
+        if fetch_result['E_NO_MORE_DATA'] == 'X':
             save_to_file(batch_df, j)
             logging.info('E_NO_MORE_DATA = True')
             break
 
         # Сохраняем промежуточный результат в файл
         tmp_file_name = file_name = 'inc/tmp_' + queue_params['I_QUEUENAME']
-        client = hdfs.Config().get_client('dev')
+
         with client.write(tmp_file_name, overwrite=True) as writer:
             writer.write(bytes(str(fetch_result['ET_DATA']), 'utf-8'))
             logging.info('Writing of temp file is finished. File ' + tmp_file_name)
@@ -211,30 +213,9 @@ if __name__ == '__main__':
         # Склеиваем части строк. См. описание к функции 
         raw_rows = concatenate_rows(fetch_result)
     
-        # На случай, если склееные строки все-таки будут возвращаться словарем
-        #raw_rows = [i for i in res_rows.values()]
-    
         clear_rows = list(map(parse_row, raw_rows))
         res_df = pd.DataFrame(clear_rows)
-    
-        # if j == 1:
-        #     # Сохраняем в csv
-        #     file_name = folder + '/' + queue_params['I_QUEUENAME'] + '_' + datetime.now().strftime('%Y%m%d') + '_' + str(i) + '.csv'
-        #     res_df.to_csv(file_name, index = False)
-        
-        #     file_size = os.path.getsize(file_name)
-        #     current_size += file_size
-        
-        #     if current_size < block_size:
-        #         batch_df = batch_df.append(res_df, sort=False)
-        #         rows_cnt = batch_df.shape[0]
-        #     else:
-        #         save_to_file(batch_df, j)
-                
-        #         current_size = file_size
-        #         batch_df = res_df
-        #         j += 1
-        # else:
+
         logging.info('batch_df.shape[0] = ' + str(batch_df.shape[0]))
         logging.info('res_df.shape[0] = ' + str(res_df.shape[0]))
         logging.info('rows_cnt = ' + str(rows_cnt))
@@ -250,10 +231,5 @@ if __name__ == '__main__':
             j += 1           
              
         i += 1
-        # save_to_file(batch_df, j)
-        # break
 
-    # conn.close()
-    # logging.info('Connection alive = ' + str(conn.alive))
-    
     logging.info('************End program************')
